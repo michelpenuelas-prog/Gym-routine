@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iron Log</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+    body{background:#09090b;font-family:'Barlow',sans-serif;color:#f4f4f5}
+    input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+    input:focus,textarea:focus{border-color:#ef4444!important;outline:none}
+    @keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+    ::-webkit-scrollbar{width:4px;height:4px}
+    ::-webkit-scrollbar-thumb{background:#27272a;border-radius:2px}
+    ::-webkit-scrollbar-track{background:transparent}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const STORAGE_KEY = "ironlog-v1";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwNtUz41IZL-XYgwD9oLZ3Wvz-B5jm9FQ8Sw-s7QZhM17csqlioC3GzTh_rHsDw529yng/exec";
+
+const MUSCLE_GROUPS = {
+  "Pecho": ["Press Banca","Press Inclinado","Press Declinado","Aperturas"],
+  "Piernas": ["Sentadilla","Prensa de Piernas","Extensión Cuádriceps","Curl Femoral","Pantorrillas","Peso Muerto Rumano","Hip Thrust","Zancadas"],
+  "Espalda": ["Peso Muerto","Dominadas","Remo con Barra","Remo con Mancuerna","Jalón al Pecho"],
+  "Hombros": ["Press Militar","Elevaciones Laterales","Pájaros","Face Pull"],
+  "Bíceps": ["Curl con Barra","Curl Martillo","Curl Predicador"],
+  "Tríceps": ["Fondos en Polea","Extensión Tríceps","Press Francés"],
+};
+
+function getMuscleGroup(ex) {
+  for (const [g,list] of Object.entries(MUSCLE_GROUPS)) if (list.includes(ex)) return g;
+  return "Otro";
+}
+function formatDate(d) {
+  const [y,m,day] = d.split("-");
+  return `${parseInt(day)} ${"Ene Feb Mar Abr May Jun Jul Ago Sep Oct Nov Dic".split(" ")[parseInt(m)-1]} ${y}`;
+}
+function todayStr() { return new Date().toISOString().split("T")[0]; }
+function getPR(logs, name) {
+  let max=0, date=null;
+  for (const l of logs) for (const e of l.exercises) if (e.name===name)
+    for (const s of e.sets) if (parseFloat(s.weight)>max){max=parseFloat(s.weight);date=l.date;}
+  return max>0?{weight:max,date}:null;
+}
+function logsToRows(logs) {
+  const rows=[];
+  for (const log of logs)
+    for (const ex of log.exercises)
+      ex.sets.forEach((s,i)=>rows.push([log.date,ex.name,getMuscleGroup(ex.name),i+1,s.weight||"",s.reps||"",i===0?(log.notes||""):""]));
+  return rows;
+}
+
+function loadLocal() {
+  try { const v=localStorage.getItem(STORAGE_KEY); if(v) return JSON.parse(v); } catch {}
+  return { logs:[] };
+}
+function saveLocal(data) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+}
+async function syncSheets(data) {
+  const res = await fetch(SHEETS_URL, { method:"POST", body:JSON.stringify({action:"sync",rows:logsToRows(data.logs)}) });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error||"Error");
+}
+
+const inp = { width:"100%", background:"#18181b", border:"1px solid #3f3f46", borderRadius:8, color:"#f4f4f5", padding:"7px 10px", fontSize:"0.9rem", fontFamily:"inherit", outline:"none", boxSizing:"border-box" };
+const rmBtn = { background:"none", border:"none", color:"#52525b", cursor:"pointer", fontSize:"1.1rem", padding:"0 2px", lineHeight:1 };
+
+function PRBadge() {
+  return <span style={{background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",fontSize:"0.6rem",fontWeight:800,padding:"1px 6px",borderRadius:4,letterSpacing:"0.08em",marginLeft:6}}>PR</span>;
+}
+
+function SetRow({set,index,onChange,onRemove,isPR}) {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+      <span style={{color:"#6b7280",fontSize:"0.78rem",width:22,textAlign:"right"}}>{index+1}</span>
+      <div style={{position:"relative",flex:1}}>
+        <input type="number" value={set.weight} onChange={e=>onChange(index,"weight",e.target.value)} placeholder="kg" style={inp}/>
+        <span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:"#52525b",fontSize:"0.72rem",pointerEvents:"none"}}>kg</span>
+      </div>
+      <span style={{color:"#9ca3af"}}>×</span>
+      <div style={{position:"relative",flex:1}}>
+        <input type="number" value={set.reps} onChange={e=>onChange(index,"reps",e.target.value)} placeholder="reps" style={inp}/>
+        <span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:"#52525b",fontSize:"0.72rem",pointerEvents:"none"}}>reps</span>
+      </div>
+      {isPR && <PRBadge/>}
+      <button onClick={()=>onRemove(index)} style={rmBtn}>×</button>
+    </div>
+  );
+}
+
+function ExerciseCard({exercise,onChange,onRemove,allLogs,currentLogDate}) {
+  const prev = allLogs.filter(l=>l.date!==currentLogDate);
+  const pr = getPR(prev, exercise.name);
+  const curMax = exercise.sets.reduce((m,s)=>Math.max(m,parseFloat(s.weight)||0),0);
+  const isNewPR = pr ? curMax>pr.weight : curMax>0;
+
+  function updSet(i,f,v){onChange({...exercise,sets:exercise.sets.map((s,j)=>j===i?{...s,[f]:v}:s)});}
+  function addSet(){const l=exercise.sets[exercise.sets.length-1]||{weight:"",reps:""};onChange({...exercise,sets:[...exercise.sets,{weight:l.weight,reps:l.reps}]});}
+  function rmSet(i){if(exercise.sets.length<=1)return;onChange({...exercise,sets:exercise.sets.filter((_,j)=>j!==i)});}
+
+  return (
+    <div style={{background:"#1c1c1f",border:"1px solid #27272a",borderRadius:14,padding:"16px 16px 12px",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+        <div>
+          <div style={{display:"flex",alignItems:"center"}}>
+            <span style={{color:"#f4f4f5",fontWeight:700,fontSize:"1rem",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:"0.02em"}}>{exercise.name}</span>
+            {isNewPR && curMax>0 && <PRBadge/>}
+          </div>
+          <span style={{fontSize:"0.68rem",color:"#a16207",background:"#451a03",padding:"1px 7px",borderRadius:4,fontWeight:600,display:"inline-block",marginTop:3}}>{getMuscleGroup(exercise.name)}</span>
+          {pr && <div style={{color:"#6b7280",fontSize:"0.72rem",marginTop:3}}>PR anterior: <strong style={{color:"#a3a3a3"}}>{pr.weight} kg</strong> · {formatDate(pr.date)}</div>}
+        </div>
+        <button onClick={onRemove} style={{...rmBtn,fontSize:"1.3rem",color:"#3f3f46"}}>×</button>
+      </div>
+      <div style={{borderTop:"1px solid #27272a",paddingTop:10}}>
+        {exercise.sets.map((s,i)=><SetRow key={i} set={s} index={i} onChange={updSet} onRemove={rmSet} isPR={pr?parseFloat(s.weight)>pr.weight:false}/>)}
+      </div>
+      <button onClick={addSet} style={{background:"none",border:"1px dashed #3f3f46",borderRadius:8,color:"#71717a",cursor:"pointer",fontSize:"0.8rem",padding:"5px 14px",width:"100%",marginTop:4,fontFamily:"inherit"}}>+ Añadir set</button>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setData] = useState(()=>loadLocal());
+  const [view, setView] = useState("home");
+  const [activeDate, setActiveDate] = useState(todayStr());
+  const [showPicker, setShowPicker] = useState(false);
+  const [customEx, setCustomEx] = useState("");
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [toast, setToast] = useState(null);
+  const [filterGroup, setFilterGroup] = useState("Todos");
+  let syncTimer = null;
+
+  function showToast(msg,type="success"){setToast({msg,type});setTimeout(()=>setToast(null),2500);}
+
+  function persist(newData) {
+    saveLocal(newData);
+    setSyncStatus("syncing");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(async()=>{
+      try{await syncSheets(newData);setSyncStatus("ok");setTimeout(()=>setSyncStatus("idle"),2500);}
+      catch{setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),4000);}
+    },1200);
+  }
+
+  function getLog(date){return data.logs.find(l=>l.date===date)||{date,exercises:[],notes:""};}
+
+  function upsertLog(log){
+    const logs=data.logs.filter(l=>l.date!==log.date);
+    const empty=log.exercises.length===0&&!log.notes;
+    const newData={...data,logs:empty?logs:[...logs,log].sort((a,b)=>b.date.localeCompare(a.date))};
+    setData(newData);persist(newData);
+  }
+
+  function addExercise(name){
+    const log=getLog(activeDate);
+    if(log.exercises.find(e=>e.name===name)){showToast("Ya está en el log","warn");return;}
+    upsertLog({...log,exercises:[...log.exercises,{name,sets:[{weight:"",reps:""}]}]});
+    setShowPicker(false);showToast(`${name} añadido`);
+  }
+  function updateExercise(date,idx,ex){const l=getLog(date);upsertLog({...l,exercises:l.exercises.map((e,i)=>i===idx?ex:e)});}
+  function removeExercise(date,idx){const l=getLog(date);upsertLog({...l,exercises:l.exercises.filter((_,i)=>i!==idx)});}
+  function updateNotes(date,notes){upsertLog({...getLog(date),notes});}
+
+  const logs=data.logs;
+  const currentLog=getLog(activeDate);
+  const allNames=[...new Set(logs.flatMap(l=>l.exercises.map(e=>e.name)))];
+  const prs=allNames.map(name=>{const p=getPR(logs,name);return p?{name,...p,group:getMuscleGroup(name)}:null;}).filter(Boolean).sort((a,b)=>a.group.localeCompare(b.group));
+  const groups=["Todos",...Object.keys(MUSCLE_GROUPS)];
+  const filteredPRs=filterGroup==="Todos"?prs:prs.filter(p=>p.group===filterGroup);
+
+  const syncLabel = {idle:"Sincronizado con Google Sheets",syncing:"Sincronizando...",ok:"Guardado en Google Sheets ✓",error:"Error al sincronizar"};
+  const syncColor = {idle:"#3f3f46",syncing:"#a16207",ok:"#16a34a",error:"#ef4444"};
+
+  return (
+    <div style={{background:"#09090b",minHeight:"100vh",maxWidth:480,margin:"0 auto",fontFamily:"'Barlow',sans-serif",color:"#f4f4f5",paddingBottom:80}}>
+
+      {/* Header */}
+      <div style={{padding:"24px 20px 14px",borderBottom:"1px solid #18181b"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.7rem",fontWeight:800,letterSpacing:"0.04em"}}>IRON LOG</span>
+          <span style={{width:8,height:8,background:"#ef4444",borderRadius:"50%",display:"inline-block"}}/>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:5}}>
+          <span style={{width:7,height:7,borderRadius:"50%",background:syncColor[syncStatus],display:"inline-block",...(syncStatus==="syncing"?{animation:"pulse 1s ease infinite"}:{})}}/>
+          <span style={{fontSize:"0.72rem",color:syncColor[syncStatus],fontWeight:600}}>{syncLabel[syncStatus]}</span>
+        </div>
+      </div>
+
+      {/* Toast */}
+      {toast && <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:toast.type==="warn"?"#78350f":"#14532d",color:"#fff",padding:"9px 20px",borderRadius:10,fontSize:"0.85rem",fontWeight:600,zIndex:999,boxShadow:"0 4px 24px rgba(0,0,0,0.5)",animation:"fadeIn 0.2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
+
+      {/* HOME */}
+      {view==="home" && (
+        <div style={{padding:"20px 20px 0"}}>
+          <div style={{background:"linear-gradient(135deg,#1a1a1d,#1c1c1f)",border:"1px solid #27272a",borderRadius:16,padding:"18px 20px",marginBottom:16,cursor:"pointer"}} onClick={()=>{setActiveDate(todayStr());setView("log");}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"1.15rem",letterSpacing:"0.04em"}}>HOY</div>
+                <div style={{color:"#71717a",fontSize:"0.8rem"}}>{formatDate(todayStr())}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                {getLog(todayStr()).exercises.length>0
+                  ?<><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.5rem",fontWeight:800,color:"#ef4444"}}>{getLog(todayStr()).exercises.length}</div><div style={{color:"#71717a",fontSize:"0.72rem"}}>ejercicios</div></>
+                  :<span style={{color:"#3f3f46",fontSize:"0.8rem"}}>Sin registro</span>}
+              </div>
+            </div>
+            <div style={{marginTop:12,color:"#a16207",fontSize:"0.82rem",fontWeight:600}}>
+              {getLog(todayStr()).exercises.length>0?getLog(todayStr()).exercises.map(e=>e.name).join(" · "):"Toca para empezar →"}
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+            {[{label:"Sesiones",value:logs.length},{label:"Récords",value:prs.length}].map(s=>(
+              <div key={s.label} style={{background:"#141414",border:"1px solid #27272a",borderRadius:12,padding:"14px 16px",textAlign:"center"}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"2rem",fontWeight:800}}>{s.value}</div>
+                <div style={{color:"#52525b",fontSize:"0.75rem",marginTop:2}}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.9rem",letterSpacing:"0.08em",color:"#52525b",marginBottom:10}}>RECIENTES</div>
+          {logs.length===0&&<div style={{color:"#3f3f46",fontSize:"0.85rem",textAlign:"center",padding:"30px 0"}}>Aún no hay sesiones registradas</div>}
+          {logs.slice(0,5).map(log=>(
+            <div key={log.date} onClick={()=>{setActiveDate(log.date);setView("log");}} style={{background:"#141414",border:"1px solid #27272a",borderRadius:12,padding:"13px 16px",marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:"0.88rem",fontWeight:600}}>{formatDate(log.date)}</div>
+                <div style={{fontSize:"0.75rem",color:"#52525b",marginTop:3}}>{log.exercises.map(e=>e.name).join(", ").slice(0,50)}</div>
+              </div>
+              <span style={{color:"#3f3f46"}}>›</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LOG */}
+      {view==="log" && (
+        <div style={{padding:"20px 20px 0"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+            <button onClick={()=>setView("home")} style={{...rmBtn,color:"#71717a",fontSize:"1.2rem"}}>‹</button>
+            <input type="date" value={activeDate} onChange={e=>setActiveDate(e.target.value)} style={{...inp,flex:1}}/>
+          </div>
+          {currentLog.exercises.map((ex,idx)=>(
+            <ExerciseCard key={`${ex.name}-${idx}`} exercise={ex}
+              onChange={u=>updateExercise(activeDate,idx,u)}
+              onRemove={()=>removeExercise(activeDate,idx)}
+              allLogs={logs} currentLogDate={activeDate}/>
+          ))}
+          {!showPicker
+            ?<button onClick={()=>setShowPicker(true)} style={{width:"100%",background:"#ef4444",border:"none",borderRadius:12,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"1rem",letterSpacing:"0.06em",padding:"13px",cursor:"pointer",marginBottom:16}}>+ AÑADIR EJERCICIO</button>
+            :<div style={{background:"#141414",border:"1px solid #27272a",borderRadius:14,padding:16,marginBottom:16}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.9rem",color:"#71717a",letterSpacing:"0.08em",marginBottom:12}}>ELIGE EJERCICIO</div>
+              {Object.entries(MUSCLE_GROUPS).map(([group,exs])=>(
+                <div key={group} style={{marginBottom:10}}>
+                  <div style={{fontSize:"0.72rem",color:"#a16207",fontWeight:700,letterSpacing:"0.08em",marginBottom:5}}>{group.toUpperCase()}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {exs.map(name=><button key={name} onClick={()=>addExercise(name)} style={{background:"#1c1c1f",border:"1px solid #3f3f46",borderRadius:8,color:"#d4d4d8",fontSize:"0.78rem",padding:"5px 10px",cursor:"pointer",fontFamily:"inherit"}}>{name}</button>)}
+                  </div>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8,marginTop:10}}>
+                <input type="text" value={customEx} onChange={e=>setCustomEx(e.target.value)} placeholder="Ejercicio personalizado..." style={{...inp,flex:1}}
+                  onKeyDown={e=>{if(e.key==="Enter"&&customEx.trim()){addExercise(customEx.trim());setCustomEx("");}}}/>
+                <button onClick={()=>{if(customEx.trim()){addExercise(customEx.trim());setCustomEx("");}}} style={{background:"#ef4444",border:"none",borderRadius:8,color:"#fff",fontFamily:"inherit",fontWeight:700,padding:"0 14px",cursor:"pointer"}}>+</button>
+              </div>
+              <button onClick={()=>setShowPicker(false)} style={{marginTop:10,background:"none",border:"none",color:"#52525b",cursor:"pointer",fontSize:"0.8rem",fontFamily:"inherit"}}>Cancelar</button>
+            </div>
+          }
+          <div style={{marginBottom:20}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.85rem",color:"#52525b",letterSpacing:"0.08em",marginBottom:8}}>NOTAS DEL DÍA</div>
+            <textarea value={currentLog.notes||""} onChange={e=>updateNotes(activeDate,e.target.value)} placeholder="¿Cómo te sentiste? ¿Alguna lesión? ¿Fatiga?" rows={3} style={{...inp,resize:"vertical",minHeight:70,lineHeight:1.5}}/>
+          </div>
+        </div>
+      )}
+
+      {/* PRs */}
+      {view==="prs" && (
+        <div style={{padding:"20px 20px 0"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"1.3rem",letterSpacing:"0.04em",marginBottom:16}}>RÉCORDS PERSONALES</div>
+          <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:18,paddingBottom:4}}>
+            {groups.map(g=><button key={g} onClick={()=>setFilterGroup(g)} style={{background:filterGroup===g?"#ef4444":"#1c1c1f",border:filterGroup===g?"1px solid #ef4444":"1px solid #27272a",borderRadius:20,color:filterGroup===g?"#fff":"#71717a",fontSize:"0.75rem",padding:"5px 13px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",fontWeight:filterGroup===g?700:400}}>{g}</button>)}
+          </div>
+          {filteredPRs.length===0&&<div style={{color:"#3f3f46",textAlign:"center",padding:"40px 0",fontSize:"0.85rem"}}>Sin PRs registrados aún</div>}
+          {filteredPRs.map(pr=>(
+            <div key={pr.name} style={{background:"#141414",border:"1px solid #27272a",borderRadius:12,padding:"13px 16px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:600,fontSize:"0.92rem"}}>{pr.name}</div>
+                <div style={{fontSize:"0.72rem",color:"#52525b",marginTop:2}}>{pr.group} · {formatDate(pr.date)}</div>
+              </div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.5rem",fontWeight:800,color:"#f59e0b"}}>{pr.weight} <span style={{fontSize:"0.9rem",color:"#71717a"}}>kg</span></div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* HISTORY */}
+      {view==="history" && (
+        <div style={{padding:"20px 20px 0"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"1.3rem",letterSpacing:"0.04em",marginBottom:16}}>HISTORIAL</div>
+          {logs.length===0&&<div style={{color:"#3f3f46",textAlign:"center",padding:"40px 0",fontSize:"0.85rem"}}>Sin sesiones registradas</div>}
+          {logs.map(log=>(
+            <div key={log.date} onClick={()=>{setActiveDate(log.date);setView("log");}} style={{background:"#141414",border:"1px solid #27272a",borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontWeight:700,fontSize:"0.92rem"}}>{formatDate(log.date)}</span>
+                <span style={{color:"#52525b",fontSize:"0.8rem"}}>{log.exercises.length} ejercicios</span>
+              </div>
+              {log.exercises.map(ex=>{
+                const maxW=Math.max(...ex.sets.map(s=>parseFloat(s.weight)||0));
+                return <div key={ex.name} style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{fontSize:"0.8rem",color:"#a3a3a3"}}>{ex.name}</span>
+                  <span style={{fontSize:"0.78rem",color:"#71717a"}}>{ex.sets.length} sets · máx {maxW>0?maxW+" kg":"—"}</span>
+                </div>;
+              })}
+              {log.notes&&<div style={{marginTop:8,fontSize:"0.75rem",color:"#52525b",fontStyle:"italic",borderTop:"1px solid #27272a",paddingTop:7}}>"{log.notes.slice(0,80)}{log.notes.length>80?"...":""}"</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bottom Nav */}
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#09090b",borderTop:"1px solid #18181b",display:"flex",justifyContent:"space-around",padding:"10px 0 16px",zIndex:100}}>
+        {[{id:"home",icon:"⊞",label:"Inicio"},{id:"log",icon:"✚",label:"Hoy"},{id:"prs",icon:"⚡",label:"PRs"},{id:"history",icon:"◷",label:"Historial"}].map(tab=>(
+          <button key={tab.id} onClick={()=>{setView(tab.id);if(tab.id==="log")setActiveDate(todayStr());}} style={{background:"none",border:"none",color:view===tab.id?"#ef4444":"#3f3f46",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"inherit",padding:"4px 16px",transition:"color 0.15s"}}>
+            <span style={{fontSize:"1.2rem"}}>{tab.icon}</span>
+            <span style={{fontSize:"0.65rem",fontWeight:600,letterSpacing:"0.06em"}}>{tab.label.toUpperCase()}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
