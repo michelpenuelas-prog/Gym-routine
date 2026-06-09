@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gym Routine</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+    body{background:#f7f4f0;font-family:'Barlow',sans-serif;color:#2d2040}
+    input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+    input:focus,textarea:focus{border-color:#a855f7!important;outline:none}
+    @keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+    @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    ::-webkit-scrollbar{width:4px;height:4px}
+    ::-webkit-scrollbar-thumb{background:#d8b4fe;border-radius:2px}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const STORAGE_KEY = "gymroutine-v2";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwNtUz41IZL-XYgwD9oLZ3Wvz-B5jm9FQ8Sw-s7QZhM17csqlioC3GzTh_rHsDw529yng/exec";
+const KG_TO_LB = 2.20462;
+const A = "#9333ea";
+const A2 = "#7c3aed";
+const AL = "#f3e8ff";
+const BORDER = "#e5ddd5";
+const TEXT = "#2d2040";
+const MUTED = "#9d8caa";
+const WHITE = "#faf7f2";
+
+function toDisplay(kg,unit){
+  if(kg===""||kg===undefined||kg===null)return"";
+  const v=unit==="lb"?parseFloat(kg)*KG_TO_LB:parseFloat(kg);
+  return isNaN(v)?"":parseFloat(v.toFixed(2));
+}
+function toKg(val,unit){
+  if(val===""||val===undefined)return"";
+  const v=unit==="lb"?parseFloat(val)/KG_TO_LB:parseFloat(val);
+  return isNaN(v)?"":parseFloat(v.toFixed(4));
+}
+
+const MUSCLE_GROUPS={
+  "Pecho":["Press Banca","Press Inclinado","Press Declinado","Aperturas"],
+  "Piernas":["Sentadilla","Prensa de Piernas","Extensión Cuádriceps","Curl Femoral","Pantorrillas","Peso Muerto Rumano","Hip Thrust","Zancadas"],
+  "Espalda":["Peso Muerto","Dominadas","Remo con Barra","Remo con Mancuerna","Jalón al Pecho"],
+  "Hombros":["Press Militar","Elevaciones Laterales","Pájaros","Face Pull"],
+  "Bíceps":["Curl con Barra","Curl Martillo","Curl Predicador"],
+  "Tríceps":["Fondos en Polea","Extensión Tríceps","Press Francés"],
+};
+
+function getMG(ex,custom){
+  if(custom&&custom[ex])return custom[ex];
+  for(const[g,l]of Object.entries(MUSCLE_GROUPS))if(l.includes(ex))return g;
+  return"Otro";
+}
+function getLastSession(logs,exName,currentDate){
+  const prev=logs.filter(l=>l.date<currentDate).sort((a,b)=>b.date.localeCompare(a.date));
+  for(const l of prev){
+    const ex=l.exercises.find(e=>e.name===exName);
+    if(ex&&ex.sets&&ex.sets.length>0)return ex.sets;
+  }
+  return null;
+}
+function todayStr(){
+  const d=new Date();
+  return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function localDateStr(d){
+  return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function getPR(logs,name){
+  let max=0,date=null;
+  for(const l of logs)for(const e of l.exercises)if(e.name===name)
+    for(const s of e.sets)if(parseFloat(s.weight)>max){max=parseFloat(s.weight);date=l.date;}
+  return max>0?{weight:max,date}:null;
+}
+function logsToRows(logs,custom){
+  const rows=[];
+  for(const log of logs)for(const ex of log.exercises)
+    ex.sets.forEach((s,i)=>rows.push([log.date,ex.name,getMG(ex.name,custom),i+1,s.weight||"",s.reps||"",i===0?(log.notes||""):"",i===0?(ex.exNotes||""):""]));
+  return rows;
+}
+function getWeekKey(dateStr){
+  const d=new Date(dateStr+"T12:00:00");
+  const diff=d.getDay()===0?6:d.getDay()-1;
+  const mon=new Date(d);mon.setDate(d.getDate()-diff);
+  return localDateStr(mon);
+}
+function calcStreak(logs){
+  if(!logs||logs.length===0)return{streak:0,thisWeekDays:0};
+  const attended=logs.filter(l=>l.attended!==false);
+  const weeks={};
+  for(const l of attended){const wk=getWeekKey(l.date);if(!weeks[wk])weeks[wk]=new Set();weeks[wk].add(l.date);}
+  const thisWeek=getWeekKey(todayStr());
+  const thisWeekDays=weeks[thisWeek]?weeks[thisWeek].size:0;
+  function prevWk(wk){const d=new Date(wk+"T12:00:00");d.setDate(d.getDate()-7);return localDateStr(d);}
+  const sorted=Object.keys(weeks).sort((a,b)=>b.localeCompare(a));
+  let streak=0,cursor=thisWeek;
+  for(const wk of sorted){
+    if(wk!==cursor)break;
+    if(weeks[wk].size>=2){streak++;cursor=prevWk(cursor);}
+    else if(wk===thisWeek){cursor=prevWk(cursor);}
+    else break;
+  }
+  return{streak,thisWeekDays};
+}
+function loadLocal(){try{const v=localStorage.getItem(STORAGE_KEY);if(v)return JSON.parse(v);}catch{}return null;}
+function saveLocal(d){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d));}catch{}}
+async function fetchSheets(){const r=await fetch(SHEETS_URL+"?t="+Date.now());return r.json();}
+async function pushSheets(data){
+  const custom=data.customExercises||{};
+  await fetch(SHEETS_URL,{method:"POST",body:JSON.stringify({action:"save_json",json:JSON.stringify(data)})});
+  await fetch(SHEETS_URL,{method:"POST",body:JSON.stringify({action:"sync",rows:logsToRows(data.logs,custom)})});
+}
+
+const inp={width:"100%",background:WHITE,border:`1px solid ${BORDER}`,borderRadius:8,color:TEXT,padding:"8px 10px",fontSize:"0.9rem",fontFamily:"inherit",outline:"none",boxSizing:"border-box"};
+const rmBtn={background:"none",border:"none",color:MUTED,cursor:"pointer",fontSize:"1.1rem",padding:"0 2px",lineHeight:1};
+
+function PRBadge(){
+  return<span style={{background:`linear-gradient(135deg,${A},${A2})`,color:"#fff",fontSize:"0.58rem",fontWeight:800,padding:"2px 7px",borderRadius:20,letterSpacing:"0.08em",marginLeft:6}}>PR ✨</span>;
+}
+function MiniUnitToggle({unit,onChange}){
+  return(
+    <div style={{display:"flex",background:WHITE,border:`1px solid ${BORDER}`,borderRadius:6,overflow:"hidden"}}>
+      {["kg","lb"].map(u=>(
+        <button key={u} onClick={()=>onChange(u)} style={{border:"none",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.72rem",letterSpacing:"0.06em",padding:"3px 9px",background:unit===u?A:"transparent",color:unit===u?"#fff":MUTED,transition:"all 0.15s"}}>{u}</button>
+      ))}
+    </div>
+  );
+}
+
+const DAYS=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+const MONTHS=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+function Calendar({logs,onSelectDay}){
+  const today=new Date();
+  const [year,setYear]=useState(today.getFullYear());
+  const [month,setMonth]=useState(today.getMonth());
+  const logSet=new Set(logs.map(l=>l.date));
+  const notAttSet=new Set(logs.filter(l=>l.attended===false).map(l=>l.date));
+  const firstDay=new Date(year,month,1).getDay();
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  function prev(){if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);}
+  function next(){if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);}
+  const cells=[];
+  for(let i=0;i<firstDay;i++)cells.push(null);
+  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+  return(
+    <div style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:20,padding:"18px",marginBottom:16,boxShadow:"0 2px 12px rgba(147,51,234,0.07)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={prev} style={{...rmBtn,fontSize:"1.3rem",padding:"0 8px",color:A}}>‹</button>
+        <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"1.1rem",letterSpacing:"0.04em",color:TEXT}}>{MONTHS[month]} {year}</span>
+        <button onClick={next} style={{...rmBtn,fontSize:"1.3rem",padding:"0 8px",color:A}}>›</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:8}}>
+        {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:"0.68rem",color:MUTED,fontWeight:700,padding:"2px 0"}}>{d}</div>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+        {cells.map((d,i)=>{
+          if(!d)return<div key={`e-${i}`}/>;
+          const ds=`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+          const has=logSet.has(ds);
+          const notAtt=notAttSet.has(ds);
+          const isTd=ds===todayStr();
+          return(
+            <button key={ds} onClick={()=>onSelectDay(ds)} style={{background:has?(notAtt?"#fff1f2":AL):isTd?"#faf0ff":"transparent",border:isTd?`2px solid ${A}`:has?(notAtt?"1px solid #fca5a5":`1px solid #d8b4fe`):`1px solid transparent`,borderRadius:10,padding:"7px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+              <span style={{fontSize:"0.83rem",fontWeight:isTd?800:has?600:400,color:isTd?A:has?(notAtt?"#ef4444":A2):MUTED}}>{d}</span>
+              {has&&<span style={{width:5,height:5,borderRadius:"50%",background:notAtt?"#ef4444":A,display:"block"}}/>}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{marginTop:14,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:"50%",background:A,display:"inline-block"}}/><span style={{fontSize:"0.7rem",color:MUTED}}>Fui</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:"50%",background:"#ef4444",display:"inline-block"}}/><span style={{fontSize:"0.7rem",color:MUTED}}>No fui</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:14,height:14,borderRadius:5,border:`2px solid ${A}`,display:"inline-block"}}/><span style={{fontSize:"0.7rem",color:MUTED}}>Hoy</span></div>
+      </div>
+    </div>
+  );
+}
+
+function SetRow({set,index,onChange,onRemove,isPR,unit,prevSet}){
+  const prevWeight = prevSet ? toDisplay(prevSet.weight, unit) : null;
+  const prevReps = prevSet ? prevSet.reps : null;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
+      <span style={{color:MUTED,fontSize:"0.78rem",width:22,textAlign:"right"}}>{index+1}</span>
+      <div style={{position:"relative",flex:1}}>
+        <input type="number" value={toDisplay(set.weight,unit)} step={unit==="lb"?"0.5":"0.25"}
+          onChange={e=>onChange(index,"weight",toKg(e.target.value,unit))}
+          placeholder={prevWeight!==null&&prevWeight!==""?String(prevWeight):unit} style={inp}/>
+        <span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:MUTED,fontSize:"0.72rem",pointerEvents:"none"}}>{unit}</span>
+      </div>
+      <span style={{color:MUTED}}>×</span>
+      <div style={{position:"relative",flex:1}}>
+        <input type="number" value={set.reps}
+          onChange={e=>onChange(index,"reps",e.target.value)}
+          placeholder={prevReps!==null&&prevReps!==""?String(prevReps):"reps"} style={inp}/>
+        <span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:MUTED,fontSize:"0.72rem",pointerEvents:"none"}}>reps</span>
+      </div>
+      {isPR&&<PRBadge/>}
+      <button onClick={()=>onRemove(index)} style={rmBtn}>×</button>
+    </div>
+  );
+}
+
+function ExerciseCard({exercise,onChange,onRemove,allLogs,currentLogDate,custom}){
+  const unit=exercise.unit||"kg";
+  const [showNotes,setShowNotes]=useState(!!(exercise.exNotes));
+  const done=exercise.done===true;
+  function setUnit(u){onChange({...exercise,unit:u});}
+  function toggleDone(){onChange({...exercise,done:!done});}
+  const prev=allLogs.filter(l=>l.date!==currentLogDate);
+  const pr=getPR(prev,exercise.name);
+  const prevSets=getLastSession(allLogs,exercise.name,currentLogDate);
+  const curMax=exercise.sets.reduce((m,s)=>Math.max(m,parseFloat(s.weight)||0),0);
+  const isNewPR=pr?curMax>pr.weight:curMax>0;
+  function updSet(i,f,v){onChange({...exercise,sets:exercise.sets.map((s,j)=>j===i?{...s,[f]:v}:s)});}
+  function addSet(){const l=exercise.sets[exercise.sets.length-1]||{weight:"",reps:""};onChange({...exercise,sets:[...exercise.sets,{weight:l.weight,reps:l.reps}]});}
+  function rmSet(i){if(exercise.sets.length<=1)return;onChange({...exercise,sets:exercise.sets.filter((_,j)=>j!==i)});}
+  function toggleNotes(){if(showNotes&&exercise.exNotes)onChange({...exercise,exNotes:""});setShowNotes(v=>!v);}
+  return(
+    <div style={{background:done?"#f5f3ff":WHITE,border:`1.5px solid ${done?A:BORDER}`,borderRadius:16,padding:"16px 16px 12px",marginBottom:12,boxShadow:done?`0 2px 12px rgba(147,51,234,0.12)`:"0 1px 8px rgba(147,51,234,0.06)",transition:"all 0.2s",opacity:done?0.8:1}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:7,marginBottom:5}}>
+            <span style={{color:done?MUTED:TEXT,fontWeight:700,fontSize:"1rem",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:"0.02em",textDecoration:done?"line-through":"none"}}>{exercise.name}</span>
+            {isNewPR&&curMax>0&&<PRBadge/>}
+            <MiniUnitToggle unit={unit} onChange={setUnit}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:"0.68rem",color:A,background:AL,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{getMG(exercise.name,custom)}</span>
+            {done&&<span style={{fontSize:"0.68rem",color:"#16a34a",background:"#f0fdf4",padding:"2px 8px",borderRadius:20,fontWeight:700,border:"1px solid #86efac"}}>✓ Completado</span>}
+          </div>
+          {pr&&<div style={{color:MUTED,fontSize:"0.72rem",marginTop:4}}>PR anterior: <strong style={{color:A2}}>{toDisplay(pr.weight,unit)} {unit}</strong></div>}
+          {prevSets&&<div style={{color:MUTED,fontSize:"0.7rem",marginTop:2}}>Última vez: {prevSets.map((s,i)=>`${toDisplay(s.weight,unit)}${unit}×${s.reps}`).join(" · ")}</div>}
+        </div>
+        <button onClick={onRemove} style={{...rmBtn,marginLeft:8,color:"#c4b5d4",fontSize:"1.3rem"}}>×</button>
+      </div>
+      <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:10}}>
+        {exercise.sets.map((s,i)=><SetRow key={i} set={s} index={i} onChange={updSet} onRemove={rmSet} isPR={pr?parseFloat(s.weight)>pr.weight:false} unit={unit} prevSet={prevSets?prevSets[i]||null:null}/>)}
+      </div>
+      <button onClick={addSet} style={{background:"none",border:`1px dashed ${BORDER}`,borderRadius:8,color:MUTED,cursor:"pointer",fontSize:"0.8rem",padding:"5px 14px",width:"100%",marginTop:6,fontFamily:"inherit"}}>+ Añadir set</button>
+
+      {/* Done + Notes row */}
+      <div style={{display:"flex",gap:8,marginTop:8}}>
+        <button onClick={toggleDone} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:done?"#f0fdf4":"none",border:`1.5px solid ${done?"#86efac":BORDER}`,borderRadius:8,color:done?"#16a34a":MUTED,cursor:"pointer",fontSize:"0.78rem",padding:"6px 10px",fontFamily:"inherit",fontWeight:700,transition:"all 0.15s"}}>
+          {done?"✅ Completado":"⬜ Marcar listo"}
+        </button>
+        <button onClick={toggleNotes} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:5,background:"none",border:`1px solid ${showNotes?A:BORDER}`,borderRadius:8,color:showNotes?A:MUTED,cursor:"pointer",fontSize:"0.78rem",padding:"6px 10px",fontFamily:"inherit",fontWeight:600,transition:"all 0.15s"}}>
+          📝 {showNotes?"Ocultar nota":"Nota"}
+        </button>
+      </div>
+
+      {showNotes&&(
+        <div style={{marginTop:8,background:AL,borderRadius:10,padding:"10px 12px",border:`1px solid #e9d5ff`}}>
+          <textarea value={exercise.exNotes||""} onChange={e=>onChange({...exercise,exNotes:e.target.value})} placeholder="Ej: agarre neutro, bajar lento, codo pegado..." rows={2} autoFocus style={{...inp,background:"transparent",border:"none",padding:0,fontSize:"0.83rem",resize:"vertical",minHeight:48,lineHeight:1.6,color:A2}}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Exercise picker with custom exercise support
+function ExercisePicker({onAdd,onClose,customExercises,onSaveCustom}){
+  const [step,setStep]=useState("main"); // main | new
+  const [name,setName]=useState("");
+  const [group,setGroup]=useState("");
+  const [newGroup,setNewGroup]=useState("");
+
+  const allGroups=[...Object.keys(MUSCLE_GROUPS),...new Set(Object.values(customExercises))].filter((v,i,a)=>a.indexOf(v)===i);
+
+  // Group custom exercises by their group
+  const customByGroup={};
+  for(const[ex,grp]of Object.entries(customExercises)){
+    if(!customByGroup[grp])customByGroup[grp]=[];
+    customByGroup[grp].push(ex);
+  }
+
+  function handleSave(){
+    const n=name.trim();
+    const g=newGroup.trim()||group;
+    if(!n){alert("Escribe el nombre del ejercicio");return;}
+    if(!g){alert("Elige o escribe un grupo muscular");return;}
+    onSaveCustom(n,g);
+    onAdd(n);
+  }
+
+  if(step==="main")return(
+    <div style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:16,padding:16,marginBottom:16,boxShadow:"0 2px 12px rgba(147,51,234,0.08)"}}>
+      <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.9rem",color:MUTED,letterSpacing:"0.08em",marginBottom:12}}>ELIGE EJERCICIO</div>
+
+      {/* Built-in */}
+      {Object.entries(MUSCLE_GROUPS).map(([grp,exs])=>(
+        <div key={grp} style={{marginBottom:12}}>
+          <div style={{fontSize:"0.7rem",color:A,fontWeight:700,letterSpacing:"0.08em",marginBottom:6}}>{grp.toUpperCase()}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {exs.map(n=><button key={n} onClick={()=>onAdd(n)} style={{background:AL,border:`1px solid #e9d5ff`,borderRadius:20,color:A2,fontSize:"0.78rem",padding:"5px 12px",cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{n}</button>)}
+          </div>
+        </div>
+      ))}
+
+      {/* Custom */}
+      {Object.entries(customByGroup).map(([grp,exs])=>(
+        <div key={grp} style={{marginBottom:12}}>
+          <div style={{fontSize:"0.7rem",color:"#0891b2",fontWeight:700,letterSpacing:"0.08em",marginBottom:6}}>{grp.toUpperCase()} ⭐</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {exs.map(n=><button key={n} onClick={()=>onAdd(n)} style={{background:"#e0f7fa",border:`1px solid #b2ebf2`,borderRadius:20,color:"#0369a1",fontSize:"0.78rem",padding:"5px 12px",cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{n}</button>)}
+          </div>
+        </div>
+      ))}
+
+      <button onClick={()=>setStep("new")} style={{width:"100%",marginTop:4,background:"none",border:`1.5px dashed ${BORDER}`,borderRadius:10,color:MUTED,cursor:"pointer",fontSize:"0.82rem",padding:"9px",fontFamily:"inherit",fontWeight:600}}>✏️ Crear ejercicio personalizado</button>
+      <button onClick={onClose} style={{marginTop:8,width:"100%",background:"none",border:"none",color:MUTED,cursor:"pointer",fontSize:"0.8rem",fontFamily:"inherit"}}>Cancelar</button>
+    </div>
+  );
+
+  return(
+    <div style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:16,padding:16,marginBottom:16,boxShadow:"0 2px 12px rgba(147,51,234,0.08)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+        <button onClick={()=>setStep("main")} style={{...rmBtn,color:A,fontSize:"1.3rem"}}>‹</button>
+        <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.9rem",color:MUTED,letterSpacing:"0.08em"}}>EJERCICIO PERSONALIZADO</span>
+      </div>
+
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:"0.75rem",color:MUTED,fontWeight:600,marginBottom:6}}>Nombre</div>
+        <input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Cable Crunch, Hip Abduction..." style={inp} autoFocus/>
+      </div>
+
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:"0.75rem",color:MUTED,fontWeight:600,marginBottom:8}}>Grupo muscular</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          {allGroups.map(g=>(
+            <button key={g} onClick={()=>{setGroup(g);setNewGroup("");}} style={{background:group===g&&!newGroup?A:AL,border:group===g&&!newGroup?`1px solid ${A}`:`1px solid #e9d5ff`,borderRadius:20,color:group===g&&!newGroup?"#fff":A2,fontSize:"0.78rem",padding:"5px 12px",cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{g}</button>
+          ))}
+        </div>
+        <input type="text" value={newGroup} onChange={e=>{setNewGroup(e.target.value);setGroup("");}} placeholder="O escribe un grupo nuevo: Core, Glúteos..." style={{...inp,fontSize:"0.85rem"}}/>
+      </div>
+
+      <button onClick={handleSave} style={{width:"100%",background:`linear-gradient(135deg,${A},${A2})`,border:"none",borderRadius:12,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.95rem",letterSpacing:"0.06em",padding:"12px",cursor:"pointer",boxShadow:`0 4px 14px rgba(147,51,234,0.25)`}}>
+        GUARDAR Y AÑADIR
+      </button>
+    </div>
+  );
+}
+
+function App(){
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState("home");
+  const [activeDate,setActiveDate]=useState(todayStr());
+  const [showPicker,setShowPicker]=useState(false);
+  const [syncStatus,setSyncStatus]=useState("idle");
+  const [toast,setToast]=useState(null);
+  const [filterGroup,setFilterGroup]=useState("Todos");
+  let syncTimer=null;
+
+  useEffect(()=>{
+    async function init(){
+      try{
+        const remote=await fetchSheets();
+        if(remote&&remote.logs){saveLocal(remote);setData(remote);}
+        else throw new Error();
+      }catch{
+        const local=loadLocal();
+        setData(local||{logs:[],customExercises:{}});
+      }finally{setLoading(false);}
+    }
+    init();
+  },[]);
+
+  function showToast(msg,type="success"){setToast({msg,type});setTimeout(()=>setToast(null),2500);}
+  function persist(nd){
+    saveLocal(nd);setSyncStatus("syncing");
+    clearTimeout(syncTimer);
+    syncTimer=setTimeout(async()=>{
+      try{await pushSheets(nd);setSyncStatus("ok");setTimeout(()=>setSyncStatus("idle"),2500);}
+      catch{setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),4000);}
+    },1200);
+  }
+
+  const customExercises=(data&&data.customExercises)||{};
+
+  function saveCustomExercise(name,group){
+    const nd={...data,customExercises:{...customExercises,[name]:group}};
+    setData(nd);persist(nd);
+  }
+
+  function getLog(date){return data.logs.find(l=>l.date===date)||{date,exercises:[],notes:""};}
+  function upsertLog(log){
+    const logs=data.logs.filter(l=>l.date!==log.date);
+    const empty=log.exercises.length===0&&!log.notes;
+    const nd={...data,logs:empty?logs:[...logs,log].sort((a,b)=>b.date.localeCompare(a.date))};
+    setData(nd);persist(nd);
+  }
+  function addExercise(name){
+    const log=getLog(activeDate);
+    if(log.exercises.find(e=>e.name===name)){showToast("Ya está en el log","warn");return;}
+    upsertLog({...log,exercises:[...log.exercises,{name,unit:"kg",sets:[{weight:"",reps:""}]}]});
+    setShowPicker(false);showToast(`${name} añadido ✨`);
+  }
+  function updateExercise(date,idx,ex){const l=getLog(date);upsertLog({...l,exercises:l.exercises.map((e,i)=>i===idx?ex:e)});}
+  function removeExercise(date,idx){const l=getLog(date);upsertLog({...l,exercises:l.exercises.filter((_,i)=>i!==idx)});}
+  function updateNotes(date,notes){upsertLog({...getLog(date),notes});}
+  function openDay(ds){setActiveDate(ds);setView("log");}
+  function fmtDate(d){
+    const [y,m,day]=d.split("-");
+    return`${parseInt(day)} ${"Ene Feb Mar Abr May Jun Jul Ago Sep Oct Nov Dic".split(" ")[parseInt(m)-1]} ${y}`;
+  }
+
+  if(loading)return(
+    <div style={{background:"#f7f4f0",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+      <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.8rem",fontWeight:800,letterSpacing:"0.04em",background:`linear-gradient(135deg,${A},${A2})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>GYM ROUTINE</span>
+      <div style={{display:"flex",alignItems:"center",gap:8,color:MUTED,fontSize:"0.82rem"}}>
+        <span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Cargando datos...
+      </div>
+    </div>
+  );
+
+  const logs=data.logs;
+  const currentLog=getLog(activeDate);
+  const allNames=[...new Set(logs.flatMap(l=>l.exercises.map(e=>e.name)))];
+  const prs=allNames.map(name=>{const p=getPR(logs,name);return p?{name,...p,group:getMG(name,customExercises)}:null;}).filter(Boolean).sort((a,b)=>a.group.localeCompare(b.group));
+  const groups=["Todos",...Object.keys(MUSCLE_GROUPS),...new Set(Object.values(customExercises))].filter((v,i,a)=>a.indexOf(v)===i);
+  const filteredPRs=filterGroup==="Todos"?prs:prs.filter(p=>p.group===filterGroup);
+  const syncLabel={idle:"Sincronizado con Google Sheets",syncing:"Sincronizando...",ok:"Guardado ✓",error:"Error al sincronizar"};
+  const syncColor={idle:MUTED,syncing:"#d97706",ok:"#16a34a",error:"#dc2626"};
+  const{streak,thisWeekDays}=calcStreak(logs);
+
+  return(
+    <div style={{background:"#f7f4f0",minHeight:"100vh",maxWidth:480,margin:"0 auto",fontFamily:"'Barlow',sans-serif",color:TEXT,paddingBottom:88}}>
+
+      <div style={{background:WHITE,padding:"24px 20px 14px",borderBottom:`1px solid ${BORDER}`,boxShadow:"0 1px 0 rgba(147,51,234,0.06)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.8rem",fontWeight:800,letterSpacing:"0.04em",background:`linear-gradient(135deg,${A},${A2})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>GYM ROUTINE</span>
+          <span style={{fontSize:"1.1rem"}}>🏋️‍♀️</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+          <span style={{width:7,height:7,borderRadius:"50%",background:syncColor[syncStatus],display:"inline-block",...(syncStatus==="syncing"?{animation:"pulse 1s ease infinite"}:{})}}/>
+          <span style={{fontSize:"0.72rem",color:syncColor[syncStatus],fontWeight:600}}>{syncLabel[syncStatus]}</span>
+        </div>
+      </div>
+
+      {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:toast.type==="warn"?"#7c2d12":A2,color:"#fff",padding:"10px 22px",borderRadius:12,fontSize:"0.85rem",fontWeight:600,zIndex:999,boxShadow:"0 4px 20px rgba(124,58,237,0.3)",animation:"fadeIn 0.2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
+
+      {view==="home"&&(
+        <div style={{padding:"20px 16px 0"}}>
+          <Calendar logs={logs} onSelectDay={openDay}/>
+          <div style={{background:streak>0?`linear-gradient(135deg,${AL},#ede9fe)`:WHITE,border:`1px solid ${streak>0?"#d8b4fe":BORDER}`,borderRadius:16,padding:"16px 20px",marginBottom:12,boxShadow:"0 2px 12px rgba(147,51,234,0.08)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"0.8rem",letterSpacing:"0.1em",color:MUTED,marginBottom:4}}>RACHA SEMANAL</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"2.8rem",fontWeight:800,color:streak>0?A:MUTED,lineHeight:1}}>{streak}</span>
+                <span style={{fontSize:"0.85rem",color:MUTED,fontWeight:600}}>{streak===1?"semana":"semanas"}</span>
+              </div>
+              <div style={{fontSize:"0.72rem",color:MUTED,marginTop:4}}>
+                {thisWeekDays>=2?<span style={{color:"#16a34a",fontWeight:600}}>✓ Esta semana completada</span>:`Esta semana: ${thisWeekDays}/2 días`}
+              </div>
+            </div>
+            <div style={{fontSize:"3rem",lineHeight:1,opacity:streak>0?1:0.2}}>{streak>=5?"🔥🔥":"🔥"}</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+            {[{label:"Sesiones",value:logs.length},{label:"Esta semana",value:thisWeekDays+" días"}].map(s=>(
+              <div key={s.label} style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:14,padding:"14px 16px",textAlign:"center",boxShadow:"0 1px 8px rgba(147,51,234,0.06)"}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"2.2rem",fontWeight:800,color:A}}>{s.value}</div>
+                <div style={{color:MUTED,fontSize:"0.75rem",marginTop:2}}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.85rem",letterSpacing:"0.08em",color:MUTED,marginBottom:10}}>RECIENTES</div>
+          {logs.length===0&&<div style={{color:MUTED,fontSize:"0.85rem",textAlign:"center",padding:"24px 0"}}>Toca un día en el calendario para empezar ✨</div>}
+          {logs.slice(0,4).map(log=>(
+            <div key={log.date} onClick={()=>openDay(log.date)} style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:14,padding:"13px 16px",marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:"0 1px 4px rgba(147,51,234,0.05)"}}>
+              <div>
+                <div style={{fontSize:"0.9rem",fontWeight:700,color:TEXT}}>{fmtDate(log.date)}</div>
+                <div style={{fontSize:"0.75rem",color:MUTED,marginTop:3}}>{log.exercises.map(e=>e.name).join(", ").slice(0,50)}</div>
+              </div>
+              <span style={{color:"#d8b4fe",fontSize:"1.1rem"}}>›</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view==="log"&&(
+        <div style={{padding:"20px 16px 0"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+            <button onClick={()=>setView("home")} style={{...rmBtn,fontSize:"1.3rem",color:A}}>‹</button>
+            <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"1.15rem",color:TEXT}}>{fmtDate(activeDate)}</span>
+            {activeDate===todayStr()&&<span style={{fontSize:"0.7rem",background:AL,color:A,borderRadius:20,padding:"2px 10px",fontWeight:700}}>HOY</span>}
+          </div>
+          <input type="date" value={activeDate} onChange={e=>setActiveDate(e.target.value)} style={{...inp,fontSize:"0.82rem",color:MUTED,marginBottom:12}}/>
+
+          {(()=>{
+            const log=getLog(activeDate);
+            if(log.exercises.length===0)return null;
+            const checked=log.attended===undefined?true:log.attended;
+            return(
+              <button onClick={()=>upsertLog({...log,attended:!checked})} style={{width:"100%",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,background:checked?"#f0fdf4":"#fff5f5",border:`1.5px solid ${checked?"#86efac":"#fca5a5"}`,borderRadius:12,padding:"11px 16px",cursor:"pointer",transition:"all 0.2s"}}>
+                <span style={{fontSize:"1.2rem"}}>{checked?"✅":"❌"}</span>
+                <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.95rem",letterSpacing:"0.04em",color:checked?"#16a34a":"#dc2626"}}>{checked?"FUI AL GYM ESTE DÍA":"NO FUI AL GYM ESTE DÍA"}</span>
+              </button>
+            );
+          })()}
+
+          {currentLog.exercises.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:MUTED,fontSize:"0.85rem"}}>Sin ejercicios — añade el primero 💪</div>}
+          {currentLog.exercises.map((ex,idx)=>(
+            <ExerciseCard key={`${ex.name}-${idx}`} exercise={ex}
+              onChange={u=>updateExercise(activeDate,idx,u)}
+              onRemove={()=>removeExercise(activeDate,idx)}
+              allLogs={logs} currentLogDate={activeDate} custom={customExercises}/>
+          ))}
+
+          {showPicker
+            ?<ExercisePicker onAdd={addExercise} onClose={()=>setShowPicker(false)} customExercises={customExercises} onSaveCustom={saveCustomExercise}/>
+            :<button onClick={()=>setShowPicker(true)} style={{width:"100%",background:`linear-gradient(135deg,${A},${A2})`,border:"none",borderRadius:14,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"1rem",letterSpacing:"0.06em",padding:"14px",cursor:"pointer",marginBottom:16,boxShadow:`0 4px 16px rgba(147,51,234,0.3)`}}>+ AÑADIR EJERCICIO</button>
+          }
+
+          <div style={{marginBottom:20}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:"0.82rem",color:MUTED,letterSpacing:"0.08em",marginBottom:8}}>NOTAS DEL DÍA</div>
+            <textarea value={currentLog.notes||""} onChange={e=>updateNotes(activeDate,e.target.value)} placeholder="¿Cómo te sentiste? ¿Alguna lesión? ¿Fatiga?" rows={3} style={{...inp,resize:"vertical",minHeight:72,lineHeight:1.6}}/>
+          </div>
+        </div>
+      )}
+
+      {view==="prs"&&(
+        <div style={{padding:"20px 16px 0"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"1.4rem",letterSpacing:"0.04em",marginBottom:16,color:TEXT}}>RÉCORDS PERSONALES ⚡</div>
+          <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:18,paddingBottom:4}}>
+            {groups.map(g=><button key={g} onClick={()=>setFilterGroup(g)} style={{background:filterGroup===g?A:WHITE,border:filterGroup===g?`1px solid ${A}`:`1px solid ${BORDER}`,borderRadius:20,color:filterGroup===g?"#fff":MUTED,fontSize:"0.75rem",padding:"5px 14px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",fontWeight:filterGroup===g?700:500}}>{g}</button>)}
+          </div>
+          {filteredPRs.length===0&&<div style={{color:MUTED,textAlign:"center",padding:"40px 0",fontSize:"0.85rem"}}>Sin PRs registrados aún</div>}
+          {filteredPRs.map(pr=>(
+            <div key={pr.name} style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:14,padding:"14px 16px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:"0 1px 6px rgba(147,51,234,0.06)"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:"0.95rem",color:TEXT}}>{pr.name}</div>
+                <div style={{fontSize:"0.72rem",color:MUTED,marginTop:3}}>{pr.group} · {fmtDate(pr.date)}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:"1.5rem",fontWeight:800,color:A}}>{pr.weight} <span style={{fontSize:"0.85rem",color:MUTED}}>kg</span></div>
+                <div style={{fontSize:"0.72rem",color:MUTED}}>{parseFloat((pr.weight*KG_TO_LB).toFixed(1))} lb</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view==="history"&&(
+        <div style={{padding:"20px 16px 0"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:"1.4rem",letterSpacing:"0.04em",marginBottom:16,color:TEXT}}>HISTORIAL</div>
+          {logs.length===0&&<div style={{color:MUTED,textAlign:"center",padding:"40px 0",fontSize:"0.85rem"}}>Sin sesiones registradas</div>}
+          {logs.map(log=>(
+            <div key={log.date} onClick={()=>openDay(log.date)} style={{background:WHITE,border:`1px solid ${BORDER}`,borderRadius:14,padding:"14px 16px",marginBottom:10,cursor:"pointer",boxShadow:"0 1px 6px rgba(147,51,234,0.05)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontWeight:700,fontSize:"0.92rem",color:TEXT}}>{fmtDate(log.date)}</span>
+                <span style={{color:log.attended===false?"#ef4444":MUTED,fontSize:"0.8rem"}}>{log.attended===false?"❌ No fui":log.exercises.length+" ejercicios"}</span>
+              </div>
+              {log.exercises.map(ex=>{
+                const u=ex.unit||"kg";
+                const maxKg=Math.max(...ex.sets.map(s=>parseFloat(s.weight)||0));
+                return<div key={ex.name} style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{fontSize:"0.8rem",color:A,fontWeight:600}}>{ex.name}</span>
+                  <span style={{fontSize:"0.78rem",color:MUTED}}>{ex.sets.length} sets · máx {maxKg>0?toDisplay(maxKg,u)+" "+u:"—"}</span>
+                </div>;
+              })}
+              {log.notes&&<div style={{marginTop:8,fontSize:"0.75rem",color:MUTED,fontStyle:"italic",borderTop:`1px solid ${BORDER}`,paddingTop:7}}>"{log.notes.slice(0,80)}{log.notes.length>80?"...":""}"</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:WHITE,borderTop:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-around",padding:"10px 0 18px",zIndex:100,boxShadow:"0 -2px 12px rgba(147,51,234,0.07)"}}>
+        {[{id:"home",icon:"📅",label:"Calendario"},{id:"log",icon:"✚",label:"Hoy"},{id:"prs",icon:"⚡",label:"PRs"},{id:"history",icon:"◷",label:"Historial"}].map(tab=>(
+          <button key={tab.id} onClick={()=>{setView(tab.id);if(tab.id==="log")setActiveDate(todayStr());}} style={{background:"none",border:"none",color:view===tab.id?A:MUTED,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"inherit",padding:"4px 10px",transition:"color 0.15s"}}>
+            <span style={{fontSize:"1.1rem"}}>{tab.icon}</span>
+            <span style={{fontSize:"0.62rem",fontWeight:700,letterSpacing:"0.05em"}}>{tab.label.toUpperCase()}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
